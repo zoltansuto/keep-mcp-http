@@ -6,6 +6,8 @@ MCP server for Google Keep
 
 ## How to use
 
+### Option 1: Using stdio transport (default)
+
 1. Add the MCP server to your MCP servers:
 
 ```json
@@ -24,7 +26,93 @@ MCP server for Google Keep
   }
 ```
 
-2. Add your credentials:
+### Option 2: Using HTTP transport
+
+1. Start the server with HTTP transport:
+
+```bash
+# Using the start script
+./start_http.sh
+
+# Or directly with Python
+python -m server.cli --transport http --host 0.0.0.0 --port 8000
+
+# Or using Docker
+docker-compose up
+```
+
+2. Configure your MCP client to connect via HTTP:
+
+```json
+  "mcpServers": {
+    "keep-mcp-http": {
+      "transport": "http",
+      "url": "http://localhost:8000/mcp/"
+    }
+  }
+```
+
+The HTTP server provides:
+- MCP endpoint: `http://localhost:8000/mcp/` (note the trailing slash)
+
+Environment variables for HTTP transport:
+- `MCP_HOST`: Host to bind to (default: 127.0.0.1)
+- `MCP_PORT`: Port to bind to (default: 8000)
+- `MCP_PATH`: Path for MCP endpoint (default: /mcp)
+
+### Option 3: Using REST API
+
+A full-featured REST API is available for standard HTTP access to Google Keep:
+
+1. Start the services with Docker Compose:
+
+```bash
+docker-compose up -d
+```
+
+This starts two services:
+- **MCP Server** (port 8000): For AI assistant integration
+- **REST API** (port 8001): For standard HTTP/REST access
+
+2. Access the REST API:
+
+```bash
+# Health check
+curl http://localhost:8001/health
+
+# List all notes
+curl http://localhost:8001/api/notes
+
+# Search notes
+curl "http://localhost:8001/api/notes/search?query=todo"
+
+# Create a note
+curl -X POST http://localhost:8001/api/notes \
+  -H "Content-Type: application/json" \
+  -d '{"title": "My Note", "text": "Note content"}'
+```
+
+3. Interactive API documentation available at: `http://localhost:8001/docs`
+
+**REST API Features:**
+- Full CRUD operations (Create, Read, Update, Delete)
+- Search functionality with query parameters
+- Health check endpoints for monitoring
+- Interactive Swagger documentation
+- Proper error handling and validation
+- Docker health checks included
+
+See [API_DOCUMENTATION.md](API_DOCUMENTATION.md) for complete REST API reference, examples, and troubleshooting.
+
+Environment variables for REST API:
+- `REST_API_PORT`: Port for REST API (default: 8001)
+- `GOOGLE_EMAIL`: Your Google account email
+- `GOOGLE_MASTER_TOKEN`: Your Google master token
+- `UNSAFE_MODE`: Allow modifying all notes (default: false)
+
+### Credentials
+
+Add your credentials:
 * `GOOGLE_EMAIL`: Your Google account email address
 * `GOOGLE_MASTER_TOKEN`: Your Google account master token
 
