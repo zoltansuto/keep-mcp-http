@@ -90,6 +90,11 @@ curl "http://localhost:8001/api/notes/search?query=todo"
 curl -X POST http://localhost:8001/api/notes \
   -H "Content-Type: application/json" \
   -d '{"title": "My Note", "text": "Note content"}'
+
+# Create a list
+curl -X POST http://localhost:8001/api/lists \
+  -H "Content-Type: application/json" \
+  -d '{"title": "Shopping List", "items": [{"text": "Milk", "checked": false}, {"text": "Bread", "checked": true}]}'
 ```
 
 3. Interactive API documentation available at: `http://localhost:8001/docs`
@@ -120,10 +125,22 @@ Check https://gkeepapi.readthedocs.io/en/latest/#obtaining-a-master-token and ht
 
 ## Features
 
-* `find`: Search for notes based on a query string
+### Notes
+* `find`: Search for notes and lists based on a query string
 * `create_note`: Create a new note with title and text (automatically adds keep-mcp label)
 * `update_note`: Update a note's title and text
 * `delete_note`: Mark a note for deletion
+
+### Lists ✨ **NEW**
+* `add_list_item`: Add an item to an existing list (supports nesting via parent_item_id)
+* `update_list_item`: Update a specific item in a list (text, checked status, and nesting) with automatic cascading check behavior
+* `delete_list_item`: Delete a specific item and all its children recursively, with cascading parent status updates
+
+**Note:** Lists are created and updated using the same `create_note` and `update_note` tools/endpoints, which automatically detect list vs note content. All list item operations include Google Keep-style cascading check behavior:
+- Checking a parent checks all children recursively
+- Parents are only checked when all children are checked
+- Deleting a parent item deletes all its children recursively
+- Deleting a checked child updates parent status appropriately
 
 By default, all destructive and modification operations are restricted to notes that have were created by the MCP server (i.e. have the keep-mcp label). Set `UNSAFE_MODE` to `true` to bypass this restriction.
 

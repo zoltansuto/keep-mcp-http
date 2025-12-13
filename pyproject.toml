@@ -1,12 +1,17 @@
 [project]
 name = "keep-mcp"
-version = "0.2.0"
+version = "0.5.3"
 description = "MCP Server for Google Keep"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "gkeepapi>=0.16.0",
     "mcp[cli]",
+    "fastapi>=0.100.0",
+    "pydantic>=2.0.0",
+    "python-dotenv>=1.0.0",
+    "uvicorn[standard]>=0.20.0",
+    "toml>=0.10.0",
 ]
 authors = [
     { name = "Jannik Feuerhahn", email = "jannik@feuer.dev" }

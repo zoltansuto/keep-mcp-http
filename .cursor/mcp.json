@@ -14,6 +14,10 @@
         "GOOGLE_MASTER_TOKEN": "Your Google Master Token - see README.md",
         "UNSAFE_MODE": "false"
       }
+    },
+    "keep-mcp-docker": {
+      "transport": "http",
+      "url": "http://localhost:8000/mcp/"
     }
   }
 }
