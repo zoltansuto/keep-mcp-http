@@ -4,10 +4,27 @@ Provides tools for interacting with Google Keep notes through MCP.
 """
 
 import json
+from typing import Optional
 from mcp.server.fastmcp import FastMCP
 from .keep_api import get_client, serialize_note, can_modify_note, share_note, unshare_note, list_collaborators
 
 mcp = FastMCP("keep")
+
+def _is_null_like(value: Optional[str]) -> bool:
+    """
+    Check if a value represents null/None in various string forms.
+
+    Args:
+        value: The value to check
+
+    Returns:
+        True if the value represents null/None, False otherwise
+    """
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return value.lower().strip() in ("null", "none", "undefined", "")
+    return False
 
 @mcp.tool()
 def find_note(query="") -> str:
@@ -196,21 +213,23 @@ def delete_note(note_id: str) -> str:
 
 
 @mcp.tool()
-def note_add_list_item(note_id: str, text: str, checked: bool = False, parent_item_id: str = None) -> str:
+def note_add_list_item(note_id: str, text: str, checked: bool = False, parent_item_id: Optional[str] = None) -> str:
     """
     Add an item to an existing list. Supports nested items via parent_item_id.
 
     Args:
-        note_id (str): The ID of the note/list
-        text (str): The text of the item to add
-        checked (bool, optional): Whether the item should be checked (default: False)
-        parent_item_id (str, optional): ID of parent item for nesting
+        note_id (str): The ID of the note/list to add the item to
+        text (str): The text content of the new list item
+        checked (bool, optional): Whether the item should be checked/selected (default: False)
+        parent_item_id (Optional[str]): ID of an existing list item to nest this item under.
+            Pass None, omit, or any null-like value ("null", "none", "undefined", "") to create a top-level item.
+            Pass a valid item ID to create a nested sub-item.
 
     Returns:
-        str: JSON string containing the updated list's data
+        str: JSON string containing the updated list's data with the new item
 
     Raises:
-        ValueError: If the list doesn't exist or cannot be modified
+        ValueError: If the list doesn't exist, cannot be modified, or parent_item_id is invalid
     """
     keep = get_client()
     list_obj = keep.get(note_id)
@@ -228,7 +247,7 @@ def note_add_list_item(note_id: str, text: str, checked: bool = False, parent_it
     new_item = list_obj.add(text, checked)
 
     # If parent_item_id is specified, indent the item
-    if parent_item_id:
+    if not _is_null_like(parent_item_id):
         parent_item = None
         for item in list_obj.items:
             if item.id == parent_item_id:
@@ -248,23 +267,26 @@ def note_add_list_item(note_id: str, text: str, checked: bool = False, parent_it
     return json.dumps(serialize_note(list_obj))
 
 @mcp.tool()
-def note_update_list_item(note_id: str, item_id: str, text: str = None, checked: bool = None, parent_item_id: str = None) -> str:
+def note_update_list_item(note_id: str, item_id: str, text: Optional[str] = None, checked: Optional[bool] = None, parent_item_id: Optional[str] = None) -> str:
     """
     Update a specific item in a list. Supports changing nesting via parent_item_id.
     Automatically handles cascading check behavior for nested items.
 
     Args:
-        note_id (str): The ID of the note/list
-        item_id (str): The ID of the item to update
-        text (str, optional): New text for the item
-        checked (bool, optional): New checked status for the item
-        parent_item_id (str, optional): New parent item ID for nesting (None to unindent)
+        note_id (str): The ID of the note/list containing the item
+        item_id (str): The ID of the specific list item to update
+        text (Optional[str]): New text content for the item. Pass None to leave unchanged.
+        checked (Optional[bool]): New checked/selected status for the item. Pass None to leave unchanged.
+            When checking/unchecking, automatically updates parent and child items according to Google Keep's nesting rules.
+        parent_item_id (Optional[str]): New parent item ID for nesting. Pass None or any null-like value
+            ("null", "none", "undefined", "") to unindent to top-level. Pass a valid item ID to indent under that parent.
+            Pass None or omit to leave nesting unchanged.
 
     Returns:
         str: JSON string containing the updated list's data
 
     Raises:
-        ValueError: If the list or item doesn't exist or cannot be modified
+        ValueError: If the list/item doesn't exist, cannot be modified, or parent_item_id is invalid
     """
     keep = get_client()
     list_obj = keep.get(note_id)
@@ -297,24 +319,23 @@ def note_update_list_item(note_id: str, item_id: str, text: str = None, checked:
         _update_item_checked_with_cascade_mcp(list_obj.items, target_item, checked)
 
     # Handle nesting changes
-    if parent_item_id is not None:
-        if parent_item_id:
-            # Find the new parent item
-            new_parent = None
-            for item in list_obj.items:
-                if item.id == parent_item_id:
-                    new_parent = item
-                    break
+    if not _is_null_like(parent_item_id):
+        # Find the new parent item
+        new_parent = None
+        for item in list_obj.items:
+            if item.id == parent_item_id:
+                new_parent = item
+                break
 
-            if not new_parent:
-                raise ValueError(f"Parent item with ID {parent_item_id} not found")
+        if not new_parent:
+            raise ValueError(f"Parent item with ID {parent_item_id} not found")
 
-            # Indent under the new parent
-            new_parent.indent(target_item)
-        else:
-            # Unindent (dedent) the item
-            if target_item.parent_item:
-                target_item.parent_item.dedent(target_item)
+        # Indent under the new parent
+        new_parent.indent(target_item)
+    else:
+        # Unindent (dedent) the item
+        if target_item.parent_item:
+            target_item.parent_item.dedent(target_item)
 
     keep.sync()  # Ensure changes are saved to the server
     return json.dumps(serialize_note(list_obj))
