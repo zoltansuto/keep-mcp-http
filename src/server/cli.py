@@ -7,8 +7,28 @@ import json
 from typing import Optional
 from mcp.server.fastmcp import FastMCP
 from .keep_api import get_client, serialize_note, can_modify_note, share_note, unshare_note, list_collaborators
+from .rest_api import ListItemResponse
 
 mcp = FastMCP("keep")
+
+def serialize_list_item(item):
+    """
+    Serialize a Google Keep list item to ListItemResponse format.
+
+    Args:
+        item: The Google Keep list item object
+
+    Returns:
+        dict: Serialized list item data
+    """
+    return {
+        "id": item.id,
+        "text": item.text,
+        "checked": item.checked,
+        "sort": getattr(item, 'sort', None),
+        "parent_item_id": item.parent_item.id if item.parent_item else None,
+        "type": "list_item"
+    }
 
 def _is_null_like(value: Optional[str]) -> bool:
     """
@@ -119,6 +139,33 @@ def update_note(note_id: str, title: str = None, text: str = None) -> str:
     return json.dumps(serialize_note(note))
 
 @mcp.tool()
+def delete_note(note_id: str) -> str:
+    """
+    Delete a note (mark for deletion).
+    
+    Args:
+        note_id (str): The ID of the note to delete
+        
+    Returns:
+        str: Success message
+        
+    Raises:
+        ValueError: If the note doesn't exist or cannot be modified
+    """
+    keep = get_client()
+    note = keep.get(note_id)
+    
+    if not note:
+        raise ValueError(f"Note with ID {note_id} not found")
+    
+    if not can_modify_note(note):
+        raise ValueError(f"Note with ID {note_id} cannot be modified (missing keep-mcp label and UNSAFE_MODE is not enabled)")
+    
+    note.delete()
+    keep.sync()  # Ensure deletion is saved to the server
+    return json.dumps({"message": f"Note {note_id} marked for deletion"})
+
+@mcp.tool()
 def share_note(note_id: str, email: str) -> str:
     """
     Share a note with a collaborator by adding them as a collaborator.
@@ -185,34 +232,6 @@ def list_collaborators(note_id: str) -> str:
         raise ValueError(str(e))
 
 @mcp.tool()
-def delete_note(note_id: str) -> str:
-    """
-    Delete a note (mark for deletion).
-    
-    Args:
-        note_id (str): The ID of the note to delete
-        
-    Returns:
-        str: Success message
-        
-    Raises:
-        ValueError: If the note doesn't exist or cannot be modified
-    """
-    keep = get_client()
-    note = keep.get(note_id)
-    
-    if not note:
-        raise ValueError(f"Note with ID {note_id} not found")
-    
-    if not can_modify_note(note):
-        raise ValueError(f"Note with ID {note_id} cannot be modified (missing keep-mcp label and UNSAFE_MODE is not enabled)")
-    
-    note.delete()
-    keep.sync()  # Ensure deletion is saved to the server
-    return json.dumps({"message": f"Note {note_id} marked for deletion"})
-
-
-@mcp.tool()
 def note_add_list_item(note_id: str, text: str, checked: bool = False, parent_item_id: Optional[str] = None) -> str:
     """
     Add an item to an existing list. Supports nested items via parent_item_id.
@@ -226,7 +245,7 @@ def note_add_list_item(note_id: str, text: str, checked: bool = False, parent_it
             Pass a valid item ID to create a nested sub-item.
 
     Returns:
-        str: JSON string containing the updated list's data with the new item
+        str: JSON string containing the created list item data
 
     Raises:
         ValueError: If the list doesn't exist, cannot be modified, or parent_item_id is invalid
@@ -264,7 +283,43 @@ def note_add_list_item(note_id: str, text: str, checked: bool = False, parent_it
 
     keep.sync()  # Ensure changes are saved to the server
 
-    return json.dumps(serialize_note(list_obj))
+    return json.dumps(serialize_list_item(new_item))
+
+@mcp.tool()
+def note_get_list_item(note_id: str, item_id: str) -> str:
+    """
+    Get a specific item from a list.
+
+    Args:
+        note_id (str): The ID of the note/list containing the item
+        item_id (str): The ID of the specific list item to retrieve
+
+    Returns:
+        str: JSON string containing the list item data
+
+    Raises:
+        ValueError: If the list or item doesn't exist
+    """
+    keep = get_client()
+    list_obj = keep.get(note_id)
+
+    if not list_obj:
+        raise ValueError(f"List with ID {note_id} not found")
+
+    if not hasattr(list_obj, 'items'):
+        raise ValueError(f"Note with ID {note_id} is not a list")
+
+    # Find the item by ID
+    target_item = None
+    for item in list_obj.items:
+        if item.id == item_id:
+            target_item = item
+            break
+
+    if not target_item:
+        raise ValueError(f"Item with ID {item_id} not found in list {note_id}")
+
+    return json.dumps(serialize_list_item(target_item))
 
 @mcp.tool()
 def note_update_list_item(note_id: str, item_id: str, text: Optional[str] = None, checked: Optional[bool] = None, parent_item_id: Optional[str] = None) -> str:
@@ -283,7 +338,7 @@ def note_update_list_item(note_id: str, item_id: str, text: Optional[str] = None
             Pass None or omit to leave nesting unchanged.
 
     Returns:
-        str: JSON string containing the updated list's data
+        str: JSON string containing the updated list item data
 
     Raises:
         ValueError: If the list/item doesn't exist, cannot be modified, or parent_item_id is invalid
@@ -338,7 +393,7 @@ def note_update_list_item(note_id: str, item_id: str, text: Optional[str] = None
             target_item.parent_item.dedent(target_item)
 
     keep.sync()  # Ensure changes are saved to the server
-    return json.dumps(serialize_note(list_obj))
+    return json.dumps(serialize_list_item(target_item))
 
 def _update_item_checked_with_cascade_mcp(all_items, target_item, checked):
     """
@@ -433,7 +488,7 @@ def note_delete_list_item(note_id: str, item_id: str) -> str:
         item_id (str): The ID of the item to delete
 
     Returns:
-        str: JSON string containing the updated list's data
+        str: JSON string containing the updated list's data (full list object)
 
     Raises:
         ValueError: If the list or item doesn't exist or cannot be modified

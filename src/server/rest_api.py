@@ -69,10 +69,17 @@ class NoteResponse(BaseModel):
     collaborators: List[str] = []
     type: str = "note"
 
-class ListItem(BaseModel):
+class ListItemRequest(BaseModel):
     id: Optional[str] = None
     text: str
     checked: bool = False
+    sort: Optional[int] = None
+    parent_item_id: Optional[str] = None
+
+class ListItemResponse(BaseModel):
+    id: str
+    text: str
+    checked: bool
     sort: Optional[int] = None
     parent_item_id: Optional[str] = None
 
@@ -81,11 +88,11 @@ class ListResponse(NoteResponse):
 
 class ListCreateRequest(BaseModel):
     title: Optional[str] = Field(None, description="List title")
-    items: List[ListItem] = Field(default_factory=list, description="List items")
+    items: List[ListItemRequest] = Field(default_factory=list, description="List items")
 
 class ListUpdateRequest(BaseModel):
     title: Optional[str] = Field(None, description="New title")
-    items: Optional[List[ListItem]] = Field(None, description="Updated list items")
+    items: Optional[List[ListItemRequest]] = Field(None, description="Updated list items")
 
 class ListItemUpdateRequest(BaseModel):
     text: Optional[str] = Field(None, description="Updated text")
@@ -187,6 +194,32 @@ def _delete_item_with_children(all_items, target_item):
     # Then delete the target item itself
     target_item.delete()
 
+# Root endpoint
+@app.get("/")
+async def root():
+    """Root endpoint with API information."""
+    return {
+        "service": "Google Keep REST API",
+        "version": get_project_version(),
+        "endpoints": {
+            "health": "/api/health",
+            "search": "GET /api/notes/search?query=...",
+            "create_note": "POST /api/notes",
+            "get": "GET /api/notes/{note_id}",
+            "update_note": "PUT /api/notes/{note_id}",
+            "delete_note": "DELETE /api/notes/{note_id}",
+            "list": "GET /api/notes",
+            "add_item": "POST /api/notes/{note_id}/list/items",
+            "get_item": "GET /api/notes/{note_id}/list/items/{item_id}",
+            "update_item": "PUT /api/notes/{note_id}/list/items/{item_id}",
+            "delete_item": "DELETE /api/notes/{note_id}/list/items/{item_id}",
+            "add_collaborator": "POST /api/notes/{note_id}/collaborators",
+            "remove_collaborator": "DELETE /api/notes/{note_id}/collaborators/{email}",
+            "get_collaborators": "GET /api/notes/{note_id}/collaborators",
+        },
+        "docs": "/docs"
+    }
+
 # Health check endpoint
 @app.get("/api/health", response_model=HealthResponse)
 async def health_check():
@@ -207,31 +240,6 @@ async def health_check():
         "timestamp": datetime.utcnow().isoformat(),
         "service": "google-keep-rest-api",
         "google_keep_connected": connected
-    }
-
-# Root endpoint
-@app.get("/")
-async def root():
-    """Root endpoint with API information."""
-    return {
-        "service": "Google Keep REST API",
-        "version": get_project_version(),
-        "endpoints": {
-            "health": "/api/health",
-            "search": "GET /api/notes/search?query=...",
-            "create_note": "POST /api/notes",
-            "get": "GET /api/notes/{note_id}",
-            "update_note": "PUT /api/notes/{note_id}",
-            "delete_note": "DELETE /api/notes/{note_id}",
-            "list": "GET /api/notes",
-            "add_item": "POST /api/notes/{note_id}/lists/items",
-            "update_item": "PUT /api/notes/{note_id}/lists/items/{item_id}",
-            "delete_item": "DELETE /api/notes/{note_id}/lists/items/{item_id}",
-            "add_collaborator": "POST /api/notes/{note_id}/collaborators",
-            "remove_collaborator": "DELETE /api/notes/{note_id}/collaborators/{email}",
-            "get_collaborators": "GET /api/notes/{note_id}/collaborators",
-        },
-        "docs": "/docs"
     }
 
 # Search/find notes
@@ -470,8 +478,8 @@ async def get_collaborators(note_id: str):
 # List-specific endpoints
 
 # Add item to list
-@app.post("/api/notes/{note_id}/lists/items", response_model=ListResponse)
-async def add_list_item(note_id: str, item: ListItem):
+@app.post("/api/notes/{note_id}/list/items", response_model=ListItemResponse)
+async def add_list_item(note_id: str, item: ListItemRequest):
     """
     Add an item to an existing list. Supports nested items via parent_item_id.
 
@@ -519,14 +527,66 @@ async def add_list_item(note_id: str, item: ListItem):
 
         keep.sync()  # Ensure changes are saved to the server
 
-        return serialize_note(list_obj)
+        # Return the created ListItemResponse
+        return ListItemResponse(
+            id=new_item.id,
+            text=new_item.text,
+            checked=new_item.checked,
+            sort=getattr(new_item, 'sort', None),
+            parent_item_id=new_item.parent_item.id if new_item.parent_item else None
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Get list item
+@app.get("/api/notes/{note_id}/list/items/{item_id}", response_model=ListItemResponse)
+async def get_list_item(note_id: str, item_id: str):
+    """
+    Get a specific item from a list.
+
+    Args:
+        note_id: The ID of the note/list
+        item_id: The ID of the item to retrieve
+
+    Returns:
+        ListItemResponse details
+    """
+    try:
+        keep = get_client()
+        list_obj = keep.get(note_id)
+
+        if not list_obj:
+            raise HTTPException(status_code=404, detail=f"List with ID {note_id} not found")
+
+        if not hasattr(list_obj, 'items'):
+            raise HTTPException(status_code=400, detail=f"Note with ID {note_id} is not a list")
+
+        # Find the item by ID
+        target_item = None
+        for item in list_obj.items:
+            if item.id == item_id:
+                target_item = item
+                break
+
+        if not target_item:
+            raise HTTPException(status_code=404, detail=f"Item with ID {item_id} not found in list {note_id}")
+
+        return ListItemResponse(
+            id=target_item.id,
+            text=target_item.text,
+            checked=target_item.checked,
+            sort=getattr(target_item, 'sort', None),
+            parent_item_id=target_item.parent_item.id if target_item.parent_item else None
+        )
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 # Update list item
-@app.put("/api/notes/{note_id}/lists/items/{item_id}", response_model=ListResponse)
+@app.put("/api/notes/{note_id}/list/items/{item_id}", response_model=ListItemResponse)
 async def update_list_item(note_id: str, item_id: str, item_update: ListItemUpdateRequest):
     """
     Update a specific item in a list. Supports changing nesting via parent_item_id.
@@ -595,14 +655,22 @@ async def update_list_item(note_id: str, item_id: str, item_update: ListItemUpda
                     target_item.parent_item.dedent(target_item)
 
         keep.sync()  # Ensure changes are saved to the server
-        return serialize_note(list_obj)
+
+        # Return the updated ListItemResponse
+        return ListItemResponse(
+            id=target_item.id,
+            text=target_item.text,
+            checked=target_item.checked,
+            sort=getattr(target_item, 'sort', None),
+            parent_item_id=target_item.parent_item.id if target_item.parent_item else None
+        )
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 # Delete list item
-@app.delete("/api/notes/{note_id}/lists/items/{item_id}", response_model=ListResponse)
+@app.delete("/api/notes/{note_id}/list/items/{item_id}")
 async def delete_list_item(note_id: str, item_id: str):
     """
     Delete a specific item from a list. Updates parent checked status if needed.

@@ -184,7 +184,7 @@ curl http://localhost:8001/api/notes/1753881285774.973567934/collaborators
 
 ### Add Item to List
 ```bash
-POST /api/notes/{note_id}/lists/items
+POST /api/notes/{note_id}/list/items
 Content-Type: application/json
 
 {
@@ -197,19 +197,41 @@ Content-Type: application/json
 **Example:**
 ```bash
 # Add regular item
-curl -X POST http://localhost:8001/api/notes/1753881285774.973567934/lists/items \
+curl -X POST http://localhost:8001/api/notes/1753881285774.973567934/list/items \
   -H "Content-Type: application/json" \
   -d '{"text": "Buy cheese", "checked": false}'
 
 # Add nested sub-item
-curl -X POST http://localhost:8001/api/notes/1753881285774.973567934/lists/items \
+curl -X POST http://localhost:8001/api/notes/1753881285774.973567934/list/items \
   -H "Content-Type: application/json" \
   -d '{"text": "Cheddar cheese", "checked": false, "parent_item_id": "parent_item_id"}'
 ```
 
+### Get List Item
+```bash
+GET /api/notes/{note_id}/list/items/{item_id}
+```
+
+**Response:**
+```json
+{
+  "id": "item_123",
+  "text": "Buy cheese",
+  "checked": false,
+  "sort": 1,
+  "parent_item_id": null,
+  "type": "list_item"
+}
+```
+
+**Example:**
+```bash
+curl http://localhost:8001/api/notes/1753881285774.973567934/list/items/item_123
+```
+
 ### Update List Item
 ```bash
-PUT /api/notes/{note_id}/lists/items/{item_id}
+PUT /api/notes/{note_id}/list/items/{item_id}
 Content-Type: application/json
 
 {
@@ -227,31 +249,31 @@ Content-Type: application/json
 **Example:**
 ```bash
 # Update text and checked status (with cascading)
-curl -X PUT http://localhost:8001/api/notes/1753881285774.973567934/lists/items/item_123 \
+curl -X PUT http://localhost:8001/api/notes/1753881285774.973567934/list/items/item_123 \
   -H "Content-Type: application/json" \
   -d '{"text": "Buy organic milk", "checked": true}'
 
 # Move item under a parent (indent)
-curl -X PUT http://localhost:8001/api/notes/1753881285774.973567934/lists/items/item_123 \
+curl -X PUT http://localhost:8001/api/notes/1753881285774.973567934/list/items/item_123 \
   -H "Content-Type: application/json" \
   -d '{"parent_item_id": "parent_item_id"}'
 
 # Unindent item (remove from parent)
-curl -X PUT http://localhost:8001/api/notes/1753881285774.973567934/lists/items/item_123 \
+curl -X PUT http://localhost:8001/api/notes/1753881285774.973567934/list/items/item_123 \
   -H "Content-Type: application/json" \
   -d '{"parent_item_id": null}'
 ```
 
 ### Delete List Item
 ```bash
-DELETE /api/notes/{note_id}/lists/items/{item_id}
+DELETE /api/notes/{note_id}/list/items/{item_id}
 ```
 
 **Note:** When deleting an item, all its child items are also deleted recursively. Additionally, the parent item's checked status is automatically updated if the deleted item was checked and affects the parent's status.
 
 **Example:**
 ```bash
-curl -X DELETE http://localhost:8001/api/notes/1753881285774.973567934/lists/items/item_123
+curl -X DELETE http://localhost:8001/api/notes/1753881285774.973567934/list/items/item_123
 # This will delete item_123 and all its children, then update the parent's checked status
 ```
 
@@ -361,12 +383,20 @@ curl -X POST http://localhost:8001/api/notes \
   -H "Content-Type: application/json" \
   -d '{"title": "Test", "text": "This is a test note"}' | jq .
 
-# Create a test list
-curl -X POST http://localhost:8001/api/lists \
+# Create a test list (lists are created as notes with items)
+curl -X POST http://localhost:8001/api/notes \
   -H "Content-Type: application/json" \
-  -d '{"title": "Test List", "items": [{"text": "Item 1", "checked": false}, {"text": "Item 2", "checked": true}]}' | jq .
+  -d '{"title": "Test List"}' | jq .
 
-# List all notes and lists
+# Then add items to the list
+curl -X POST http://localhost:8001/api/notes/{created_note_id}/list/items \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Item 1", "checked": false}' | jq .
+curl -X POST http://localhost:8001/api/notes/{created_note_id}/list/items \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Item 2", "checked": true}' | jq .
+
+# List all notes (including lists)
 curl http://localhost:8001/api/notes | jq .
 ```
 
