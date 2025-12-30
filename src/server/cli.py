@@ -26,8 +26,7 @@ def serialize_list_item(item):
         "text": item.text,
         "checked": item.checked,
         "sort": getattr(item, 'sort', None),
-        "parent_item_id": item.parent_item.id if item.parent_item else None,
-        "type": "list_item"
+        "parent_item_id": item.parent_item.id if item.parent_item else None
     }
 
 def _is_null_like(value: Optional[str]) -> bool:

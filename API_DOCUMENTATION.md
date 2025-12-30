@@ -219,8 +219,7 @@ GET /api/notes/{note_id}/list/items/{item_id}
   "text": "Buy cheese",
   "checked": false,
   "sort": 1,
-  "parent_item_id": null,
-  "type": "list_item"
+  "parent_item_id": null
 }
 ```
 
