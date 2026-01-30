@@ -99,6 +99,33 @@ class ListItemUpdateRequest(BaseModel):
     checked: Optional[bool] = Field(None, description="Checked status")
     parent_item_id: Optional[str] = Field(None, description="New parent item ID for nesting (null to unindent)")
 
+class NestedListItemInput(BaseModel):
+    text: str
+    checked: bool = False
+    children: Optional[List['NestedListItemInput']] = Field(default_factory=list, description="Nested child items")
+
+class NestedAddListItemsRequest(BaseModel):
+    items: List[NestedListItemInput] = Field(description="Items to add with optional nested children")
+    mode: str = Field(default="append", description="Mode: 'append' (default) or 'replace'")
+
+class NestedListItemOutput(BaseModel):
+    id: str
+    text: str
+    checked: bool
+    children: List['NestedListItemOutput'] = Field(default_factory=list, description="Nested child items")
+
+class NestedAddListItemsResponse(BaseModel):
+    note_id: str
+    items_added: int
+    mode: str
+    items: List[NestedListItemOutput]
+
+class NestedGetListItemsResponse(BaseModel):
+    note_id: str
+    title: Optional[str]
+    items: List[NestedListItemOutput]
+    total_items: int
+
 class CollaboratorRequest(BaseModel):
     email: str = Field(..., description="Email address of the collaborator")
 
@@ -194,6 +221,69 @@ def _delete_item_with_children(all_items, target_item):
     # Then delete the target item itself
     target_item.delete()
 
+def _add_items_recursively(list_obj, items, parent_item=None):
+    """
+    Add items to list, recursively handling children.
+
+    Args:
+        list_obj: The Google Keep list object
+        items: List of NestedListItemInput objects
+        parent_item: Parent item to indent children under (optional)
+
+    Returns:
+        List of created gkeepapi list items
+    """
+    created_items = []
+    for item_data in items:
+        # Add the item
+        new_item = list_obj.add(item_data.text, item_data.checked)
+
+        # Indent under parent if specified
+        if parent_item:
+            parent_item.indent(new_item)
+
+        created_items.append(new_item)
+
+        # Recursively add children
+        if item_data.children:
+            child_items = _add_items_recursively(
+                list_obj, item_data.children, new_item
+            )
+            created_items.extend(child_items)
+
+    return created_items
+
+def _build_nested_items(all_items):
+    """
+    Convert flat items list to nested structure.
+
+    Args:
+        all_items: List of all gkeepapi list items in the list
+
+    Returns:
+        List of nested item dictionaries
+    """
+    children_map = {}  # parent_id -> [children]
+    root_items = []
+
+    for item in all_items:
+        if item.parent_item:
+            parent_id = item.parent_item.id
+            children_map.setdefault(parent_id, []).append(item)
+        else:
+            root_items.append(item)
+
+    def build_tree(item):
+        children = children_map.get(item.id, [])
+        return {
+            "id": item.id,
+            "text": item.text,
+            "checked": item.checked,
+            "children": [build_tree(child) for child in children]
+        }
+
+    return [build_tree(item) for item in root_items]
+
 # Root endpoint
 @app.get("/")
 async def root():
@@ -216,6 +306,8 @@ async def root():
             "add_collaborator": "POST /api/notes/{note_id}/collaborators",
             "remove_collaborator": "DELETE /api/notes/{note_id}/collaborators/{email}",
             "get_collaborators": "GET /api/notes/{note_id}/collaborators",
+            "add_nested_items": "POST /api/notes/{note_id}/list/nested",
+            "get_nested_items": "GET /api/notes/{note_id}/list/nested",
         },
         "docs": "/docs"
     }
@@ -721,6 +813,102 @@ async def delete_list_item(note_id: str, item_id: str):
         keep.sync()  # Ensure changes are saved to the server
 
         return serialize_note(list_obj)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Nested list item endpoints
+
+# POST /api/notes/{note_id}/list/nested
+@app.post("/api/notes/{note_id}/list/nested", response_model=NestedAddListItemsResponse)
+async def add_nested_list_items(note_id: str, request: NestedAddListItemsRequest):
+    """
+    Add multiple items to a list with nested children in one call.
+
+    Supports two modes:
+    - "append" (default): Add items to existing list
+    - "replace": Replace all existing items with new ones
+
+    Args:
+        note_id: The ID of the note/list
+        request: NestedAddListItemsRequest with items and mode
+
+    Returns:
+        NestedAddListItemsResponse with created items
+    """
+    try:
+        keep = get_client()
+        list_obj = keep.get(note_id)
+
+        if not list_obj:
+            raise HTTPException(status_code=404, detail=f"List with ID {note_id} not found")
+
+        if not hasattr(list_obj, 'items'):
+            raise HTTPException(status_code=400, detail=f"Note with ID {note_id} is not a list")
+
+        if not can_modify_note(list_obj):
+            raise HTTPException(
+                status_code=403,
+                detail=f"List with ID {note_id} cannot be modified (missing keep-mcp label and UNSAFE_MODE is not enabled)"
+            )
+
+        # Handle replace mode - delete all existing items
+        if request.mode == "replace":
+            for item in list(list_obj.items):
+                item.delete()
+
+        # Add items recursively
+        created_items = _add_items_recursively(list_obj, request.items)
+
+        # Sync changes to Google Keep
+        keep.sync()
+
+        # Build nested response structure
+        nested_items = _build_nested_items(list_obj.items)
+
+        return NestedAddListItemsResponse(
+            note_id=note_id,
+            items_added=len(created_items),
+            mode=request.mode,
+            items=nested_items
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# GET /api/notes/{note_id}/list/nested
+@app.get("/api/notes/{note_id}/list/nested", response_model=NestedGetListItemsResponse)
+async def get_nested_list_items(note_id: str):
+    """
+    Get all items from a list in nested format (matching POST input structure).
+
+    Args:
+        note_id: The ID of the note/list
+
+    Returns:
+        NestedGetListItemsResponse with nested items
+    """
+    try:
+        keep = get_client()
+        list_obj = keep.get(note_id)
+
+        if not list_obj:
+            raise HTTPException(status_code=404, detail=f"List with ID {note_id} not found")
+
+        if not hasattr(list_obj, 'items'):
+            raise HTTPException(status_code=400, detail=f"Note with ID {note_id} is not a list")
+
+        # Build nested structure from flat items
+        nested_items = _build_nested_items(list_obj.items)
+
+        return NestedGetListItemsResponse(
+            note_id=note_id,
+            title=list_obj.title,
+            items=nested_items,
+            total_items=len(list_obj.items)
+        )
     except HTTPException:
         raise
     except Exception as e:

@@ -7,7 +7,7 @@ import json
 from typing import Optional
 from mcp.server.fastmcp import FastMCP
 from .keep_api import get_client, serialize_note, can_modify_note, share_note, unshare_note, list_collaborators
-from .rest_api import ListItemResponse
+from .rest_api import ListItemResponse, _add_items_recursively, _build_nested_items, NestedListItemInput
 
 mcp = FastMCP("keep")
 
@@ -527,6 +527,139 @@ def note_delete_list_item(note_id: str, item_id: str) -> str:
     keep.sync()  # Ensure changes are saved to the server
 
     return json.dumps(serialize_note(list_obj))
+
+@mcp.tool()
+def note_add_list_items_nested(note_id: str, items_json: str, mode: str = "append") -> str:
+    """
+    Add multiple items to a list with nested children in one call.
+
+    This tool accepts a JSON string representing nested list items and adds them to the specified list.
+    Items can have children for creating nested/sub-item structures.
+
+    Args:
+        note_id (str): The ID of the note/list to add items to
+        items_json (str): JSON string representing the items to add. Format:
+            [
+              {"text": "Parent item 1", "checked": false},
+              {"text": "Parent item 2", "checked": false, "children": [
+                {"text": "Child 1", "checked": false},
+                {"text": "Child 2", "checked": false}
+              ]}
+            ]
+        mode (str, optional): "append" (default) to add to existing items, or "replace" to replace all items
+
+    Returns:
+        str: JSON string containing the result with created nested items
+
+    Raises:
+        ValueError: If the list doesn't exist, cannot be modified, or JSON is invalid
+    """
+    try:
+        # Parse the JSON input
+        import json
+        items_data = json.loads(items_json)
+
+        # Validate that it's a list
+        if not isinstance(items_data, list):
+            raise ValueError("items_json must be a JSON array of items")
+
+        # Convert to NestedListItemInput objects
+        def create_nested_item(item_dict):
+            if not isinstance(item_dict, dict):
+                raise ValueError("Each item must be a JSON object")
+            if "text" not in item_dict:
+                raise ValueError("Each item must have a 'text' field")
+
+            # Create NestedListItemInput with proper defaults
+            children = []
+            if "children" in item_dict and isinstance(item_dict["children"], list):
+                children = [create_nested_item(child) for child in item_dict["children"]]
+
+            return NestedListItemInput(
+                text=item_dict["text"],
+                checked=item_dict.get("checked", False),
+                children=children
+            )
+
+        validated_items = [create_nested_item(item) for item in items_data]
+
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON in items_json: {str(e)}")
+    except ValueError as e:
+        raise ValueError(str(e))
+
+    keep = get_client()
+    list_obj = keep.get(note_id)
+
+    if not list_obj:
+        raise ValueError(f"List with ID {note_id} not found")
+
+    if not hasattr(list_obj, 'items'):
+        raise ValueError(f"Note with ID {note_id} is not a list")
+
+    if not can_modify_note(list_obj):
+        raise ValueError(f"List with ID {note_id} cannot be modified (missing keep-mcp label and UNSAFE_MODE is not enabled)")
+
+    # Handle replace mode - delete all existing items
+    if mode == "replace":
+        for item in list(list_obj.items):
+            item.delete()
+
+    # Add items recursively
+    created_items = _add_items_recursively(list_obj, validated_items)
+
+    # Sync changes to Google Keep
+    keep.sync()
+
+    # Build nested response structure
+    nested_items = _build_nested_items(list_obj.items)
+
+    result = {
+        "note_id": note_id,
+        "items_added": len(created_items),
+        "mode": mode,
+        "items": nested_items
+    }
+
+    return json.dumps(result)
+
+@mcp.tool()
+def note_get_list_items_nested(note_id: str) -> str:
+    """
+    Get all items from a list in nested format (matching the POST input structure).
+
+    This tool returns items in the same nested format that note_add_list_items_nested accepts,
+    making it easy to fetch a list, modify it, and post it back.
+
+    Args:
+        note_id (str): The ID of the note/list to retrieve items from
+
+    Returns:
+        str: JSON string containing the nested list items
+
+    Raises:
+        ValueError: If the list doesn't exist
+    """
+    keep = get_client()
+    list_obj = keep.get(note_id)
+
+    if not list_obj:
+        raise ValueError(f"List with ID {note_id} not found")
+
+    if not hasattr(list_obj, 'items'):
+        raise ValueError(f"Note with ID {note_id} is not a list")
+
+    # Build nested structure from flat items
+    nested_items = _build_nested_items(list_obj.items)
+
+    result = {
+        "note_id": note_id,
+        "title": list_obj.title,
+        "items": nested_items,
+        "total_items": len(list_obj.items)
+    }
+
+    return json.dumps(result)
 
 def main():
     mcp.run(transport='stdio')

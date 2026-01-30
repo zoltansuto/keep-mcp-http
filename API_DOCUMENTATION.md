@@ -276,6 +276,92 @@ curl -X DELETE http://localhost:8001/api/notes/1753881285774.973567934/list/item
 # This will delete item_123 and all its children, then update the parent's checked status
 ```
 
+## Nested List Item Operations
+
+### Add Nested Items (Batch)
+```bash
+POST /api/notes/{note_id}/list/nested
+Content-Type: application/json
+
+{
+  "items": [
+    {"text": "Parent item 1", "checked": false},
+    {"text": "Parent item 2", "checked": false, "children": [
+      {"text": "Child 1", "checked": false},
+      {"text": "Child 2", "checked": false}
+    ]},
+    {"text": "Item 3", "checked": true}
+  ],
+  "mode": "append"  // "append" (default) or "replace"
+}
+```
+
+**Modes:**
+- `append` (default): Add items to existing list
+- `replace`: Replace all existing items with new ones
+
+**Response:**
+```json
+{
+  "note_id": "...",
+  "items_added": 5,
+  "mode": "append",
+  "items": [
+    {"id": "...", "text": "Parent item 1", "checked": false, "children": []},
+    {"id": "...", "text": "Parent item 2", "checked": false, "children": [
+      {"id": "...", "text": "Child 1", "checked": false, "children": []},
+      {"id": "...", "text": "Child 2", "checked": false, "children": []}
+    ]},
+    {"id": "...", "text": "Item 3", "checked": true, "children": []}
+  ]
+}
+```
+
+**Example:**
+```bash
+curl -X POST http://localhost:8001/api/notes/1753881285774.973567934/list/nested \
+  -H "Content-Type: application/json" \
+  -d '{
+    "items": [
+      {"text": "Groceries", "checked": false, "children": [
+        {"text": "Milk", "checked": false},
+        {"text": "Bread", "checked": true}
+      ]},
+      {"text": "Homework", "checked": false}
+    ],
+    "mode": "append"
+  }'
+```
+
+### Get Nested Items
+```bash
+GET /api/notes/{note_id}/list/nested
+```
+
+**Response:**
+```json
+{
+  "note_id": "...",
+  "title": "Shopping List",
+  "items": [
+    {"id": "...", "text": "Parent item 1", "checked": false, "children": []},
+    {"id": "...", "text": "Parent item 2", "checked": false, "children": [
+      {"id": "...", "text": "Child 1", "checked": false, "children": []},
+      {"id": "...", "text": "Child 2", "checked": false, "children": []}
+    ]},
+    {"id": "...", "text": "Item 3", "checked": true, "children": []}
+  ],
+  "total_items": 5
+}
+```
+
+**Example:**
+```bash
+curl http://localhost:8001/api/notes/1753881285774.973567934/list/nested
+```
+
+**Note:** The GET response uses the same nested structure as the POST request, making it easy to fetch a list, modify it, and post it back.
+
 ## Security Features
 
 ### Keep-MCP Label Protection
@@ -464,6 +550,8 @@ Available MCP Tools:
 - `note_add_list_item(note_id, text, checked, parent_item_id)` - Add item to list
 - `note_update_list_item(note_id, item_id, text, checked, parent_item_id)` - Update list item
 - `note_delete_list_item(note_id, item_id)` - Delete list item
+- `note_add_list_items_nested(note_id, items_json, mode)` - Add multiple items with nested children
+- `note_get_list_items_nested(note_id)` - Get all items in nested format
 
 To use with Claude Code or other MCP clients, add the server configuration:
 ```json
