@@ -7,7 +7,7 @@ import json
 from typing import Optional
 from mcp.server.fastmcp import FastMCP
 from .keep_api import get_client, serialize_note, can_modify_note, share_note, unshare_note, list_collaborators
-from .rest_api import ListItemResponse, _add_items_recursively, _build_nested_items, NestedListItemInput
+from .rest_api import _add_items_recursively, _build_nested_items, NestedListItemInput
 
 mcp = FastMCP("keep")
 
@@ -533,28 +533,30 @@ def note_add_list_items_nested(note_id: str, items_json: str, mode: str = "appen
     """
     Add multiple items to a list with nested children in one call.
 
-    This tool accepts a JSON string representing nested list items and adds them to the specified list.
-    Items can have children for creating nested/sub-item structures.
+    LIMIT: items_json is limited to ~2000 characters. For larger payloads, split into
+    batches and call multiple times with mode="append".
 
     Args:
-        note_id (str): The ID of the note/list to add items to
-        items_json (str): JSON string representing the items to add. Format:
-            [
-              {"text": "Parent item 1", "checked": false},
-              {"text": "Parent item 2", "checked": false, "children": [
-                {"text": "Child 1", "checked": false},
-                {"text": "Child 2", "checked": false}
-              ]}
-            ]
-        mode (str, optional): "append" (default) to add to existing items, or "replace" to replace all items
+        note_id: The ID of the note/list
+        items_json: JSON array of items (max ~2000 chars, use minified JSON):
+            [{"text": "Item", "checked": false, "children": [...]}, ...]
+        mode: "append" (default) adds to existing items, "replace" replaces all.
+            Note: append adds to END of root list; each batch needs complete nested structures.
 
     Returns:
-        str: JSON string containing the result with created nested items
+        JSON string with created items
 
     Raises:
-        ValueError: If the list doesn't exist, cannot be modified, or JSON is invalid
+        ValueError: If list not found, not modifiable, JSON invalid, or payload too large
     """
     try:
+        # Check payload size upfront
+        if len(items_json) > 2000:
+            raise ValueError(
+                f"JSON payload too large ({len(items_json)} chars, limit ~2000). "
+                f"Split into batches and use mode='append' for subsequent calls. Use minified JSON."
+            )
+
         # Parse the JSON input
         import json
         items_data = json.loads(items_json)
@@ -584,7 +586,20 @@ def note_add_list_items_nested(note_id: str, items_json: str, mode: str = "appen
         validated_items = [create_nested_item(item) for item in items_data]
 
     except json.JSONDecodeError as e:
-        raise ValueError(f"Invalid JSON in items_json: {str(e)}")
+        error_msg = str(e)
+
+        # Detect if this looks like a truncation issue (common patterns)
+        if "Expecting ',' delimiter" in error_msg or "Unterminated string" in error_msg:
+            # Check if the JSON is suspiciously long (close to limit)
+            if len(items_json) > 1800:
+                raise ValueError(
+                    f"JSON payload too large ({len(items_json)} chars). The items_json parameter "
+                    f"is limited to ~2000 characters due to MCP protocol constraints. "
+                    f"Split your data into smaller batches and call this tool multiple times with mode='append'. "
+                    f"Use minified JSON (no whitespace) to maximize data per batch. Original error: {error_msg}"
+                )
+
+        raise ValueError(f"Invalid JSON in items_json: {error_msg}")
     except ValueError as e:
         raise ValueError(str(e))
 

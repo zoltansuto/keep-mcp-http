@@ -41,6 +41,35 @@ app.add_middleware(
 )
 
 # Pydantic models for request/response validation
+
+# Health and common models
+class HealthResponse(BaseModel):
+    status: str
+    timestamp: str
+    service: str
+    google_keep_connected: bool
+    version: str = get_project_version()
+
+# Metadata-only response models (no content)
+class NoteMetadataResponse(BaseModel):
+    id: str
+    title: Optional[str]
+    pinned: bool
+    color: Optional[str]
+    labels: List[Dict[str, str]]
+    collaborators: List[str] = []
+    type: str
+
+class ListMetadataResponse(BaseModel):
+    id: str
+    title: Optional[str]
+    pinned: bool
+    color: Optional[str]
+    labels: List[Dict[str, str]]
+    collaborators: List[str] = []
+    type: str = "list"
+
+# Notes models - for text notes only (no items)
 class NoteSearchRequest(BaseModel):
     query: Optional[str] = Field(default="", description="Search query string")
 
@@ -48,16 +77,15 @@ class NoteCreateRequest(BaseModel):
     title: Optional[str] = Field(None, description="Note title")
     text: Optional[str] = Field(None, description="Note text content")
 
-class NoteUpdateRequest(BaseModel):
+class NotePutRequest(BaseModel):
+    title: Optional[str] = Field(None, description="Note title")
+    text: Optional[str] = Field(None, description="Note text content")
+
+class NotePatchRequest(BaseModel):
     title: Optional[str] = Field(None, description="New title")
     text: Optional[str] = Field(None, description="New text content")
-
-class HealthResponse(BaseModel):
-    status: str
-    timestamp: str
-    service: str
-    google_keep_connected: bool
-    version: str = get_project_version()
+    color: Optional[str] = Field(None, description="Note color")
+    pinned: Optional[bool] = Field(None, description="Pin status")
 
 class NoteResponse(BaseModel):
     id: str
@@ -69,62 +97,56 @@ class NoteResponse(BaseModel):
     collaborators: List[str] = []
     type: str = "note"
 
-class ListItemRequest(BaseModel):
-    id: Optional[str] = None
-    text: str
-    checked: bool = False
-    sort: Optional[int] = None
-    parent_item_id: Optional[str] = None
-
-class ListItemResponse(BaseModel):
-    id: str
-    text: str
-    checked: bool
-    sort: Optional[int] = None
-    parent_item_id: Optional[str] = None
-
-class ListResponse(NoteResponse):
-    items: List[Dict[str, Any]] = []
-
+# Lists models - for list notes with items
 class ListCreateRequest(BaseModel):
     title: Optional[str] = Field(None, description="List title")
-    items: List[ListItemRequest] = Field(default_factory=list, description="List items")
+    items: List['NestedListItemInput'] = Field(default_factory=list, description="List items with optional nesting")
 
-class ListUpdateRequest(BaseModel):
+class ListPutRequest(BaseModel):
+    title: Optional[str] = Field(None, description="List title")
+    items: List['NestedListItemInput'] = Field(default_factory=list, description="List items with optional nesting")
+
+class ListPatchRequest(BaseModel):
     title: Optional[str] = Field(None, description="New title")
-    items: Optional[List[ListItemRequest]] = Field(None, description="Updated list items")
+    color: Optional[str] = Field(None, description="List color")
+    pinned: Optional[bool] = Field(None, description="Pin status")
 
-class ListItemUpdateRequest(BaseModel):
+class ListResponse(BaseModel):
+    id: str
+    title: Optional[str]
+    pinned: bool
+    color: Optional[str]
+    labels: List[Dict[str, str]]
+    collaborators: List[str] = []
+    items: List['NestedListItemOutput'] = []
+    type: str = "list"
+
+# List items models - for individual item operations
+class ItemAddRequest(BaseModel):
+    items: List['NestedListItemInput'] = Field(description="Items to add with optional nested children")
+
+class ItemPatchRequest(BaseModel):
     text: Optional[str] = Field(None, description="Updated text")
     checked: Optional[bool] = Field(None, description="Checked status")
     parent_item_id: Optional[str] = Field(None, description="New parent item ID for nesting (null to unindent)")
+
+class ItemResponse(BaseModel):
+    id: str
+    text: str
+    checked: bool
+    parent_item_id: Optional[str] = None
 
 class NestedListItemInput(BaseModel):
     text: str
     checked: bool = False
     children: Optional[List['NestedListItemInput']] = Field(default_factory=list, description="Nested child items")
 
-class NestedAddListItemsRequest(BaseModel):
-    items: List[NestedListItemInput] = Field(description="Items to add with optional nested children")
-    mode: str = Field(default="append", description="Mode: 'append' (default) or 'replace'")
-
 class NestedListItemOutput(BaseModel):
     id: str
     text: str
     checked: bool
+    parent_item_id: Optional[str] = None
     children: List['NestedListItemOutput'] = Field(default_factory=list, description="Nested child items")
-
-class NestedAddListItemsResponse(BaseModel):
-    note_id: str
-    items_added: int
-    mode: str
-    items: List[NestedListItemOutput]
-
-class NestedGetListItemsResponse(BaseModel):
-    note_id: str
-    title: Optional[str]
-    items: List[NestedListItemOutput]
-    total_items: int
 
 class CollaboratorRequest(BaseModel):
     email: str = Field(..., description="Email address of the collaborator")
@@ -293,21 +315,34 @@ async def root():
         "version": get_project_version(),
         "endpoints": {
             "health": "/api/health",
-            "search": "GET /api/notes/search?query=...",
-            "create_note": "POST /api/notes",
-            "get": "GET /api/notes/{note_id}",
-            "update_note": "PUT /api/notes/{note_id}",
-            "delete_note": "DELETE /api/notes/{note_id}",
-            "list": "GET /api/notes",
-            "add_item": "POST /api/notes/{note_id}/list/items",
-            "get_item": "GET /api/notes/{note_id}/list/items/{item_id}",
-            "update_item": "PUT /api/notes/{note_id}/list/items/{item_id}",
-            "delete_item": "DELETE /api/notes/{note_id}/list/items/{item_id}",
-            "add_collaborator": "POST /api/notes/{note_id}/collaborators",
-            "remove_collaborator": "DELETE /api/notes/{note_id}/collaborators/{email}",
-            "get_collaborators": "GET /api/notes/{note_id}/collaborators",
-            "add_nested_items": "POST /api/notes/{note_id}/list/nested",
-            "get_nested_items": "GET /api/notes/{note_id}/list/nested",
+            "notes": {
+                "search": "GET /api/notes/search?query=...",
+                "create": "POST /api/notes",
+                "list": "GET /api/notes",
+                "get": "GET /api/notes/{id}",
+                "put": "PUT /api/notes/{id}",
+                "patch": "PATCH /api/notes/{id}",
+                "delete": "DELETE /api/notes/{id}"
+            },
+            "lists": {
+                "create": "POST /api/lists",
+                "list": "GET /api/lists",
+                "get": "GET /api/lists/{id}",
+                "put": "PUT /api/lists/{id}",
+                "patch": "PATCH /api/lists/{id}",
+                "delete": "DELETE /api/lists/{id}"
+            },
+            "items": {
+                "add": "POST /api/lists/{id}/items",
+                "get": "GET /api/lists/{id}/items/{item_id}",
+                "patch": "PATCH /api/lists/{id}/items/{item_id}",
+                "delete": "DELETE /api/lists/{id}/items/{item_id}"
+            },
+            "collaborators": {
+                "add": "POST /api/notes/{id}/collaborators",
+                "get": "GET /api/notes/{id}/collaborators",
+                "remove": "DELETE /api/notes/{id}/collaborators/{email}"
+            }
         },
         "docs": "/docs"
     }
@@ -334,60 +369,66 @@ async def health_check():
         "google_keep_connected": connected
     }
 
-# Search/find notes
+# Search/find notes (ALL note types, metadata only)
 @app.get("/api/notes/search")
 async def search_notes(query: str = ""):
     """
-    Search for notes matching the query string (case-insensitive).
+    Search for all notes (text + lists) matching query (case-insensitive).
+    Returns metadata only - use GET /api/notes/{id} or /api/lists/{id} for full content.
 
     Args:
-        query: Search query string
+        query: Search query string (searches titles only)
 
     Returns:
-        List of matching notes
+        List of matching notes (metadata only, all types)
     """
     try:
         keep = get_client()
 
         if not query:
-            # If no query, return all notes
-            notes = keep.find(archived=False, trashed=False)
+            # Return all notes (both types, metadata only)
+            all_notes = keep.find(archived=False, trashed=False)
         else:
-            # Always do case-insensitive search
+            # Case-insensitive search on titles for all note types
             all_notes = keep.find(archived=False, trashed=False)
             query_lower = query.lower()
-            notes = [
+            all_notes = [
                 note for note in all_notes
-                if query_lower in (note.title or "").lower() or query_lower in (note.text or "").lower()
+                if query_lower in (note.title or "").lower()
             ]
 
-        notes_data = [serialize_note(note) for note in notes]
+        from .keep_api import serialize_note_metadata
+        notes_data = [serialize_note_metadata(note) for note in all_notes]
         return {"notes": notes_data, "count": len(notes_data)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# List all notes (same as search with empty query)
+# List all notes (ALL types, metadata only)
 @app.get("/api/notes")
 async def list_notes():
     """
-    List all notes (non-archived, non-trashed).
+    List all notes (text + lists, non-archived, non-trashed).
+    Returns metadata only - use GET /api/notes/{id} or /api/lists/{id} for full content.
 
     Returns:
-        List of all notes
+        List of all notes (metadata only, all types)
     """
     return await search_notes(query="")
 
-# Get a specific note
-@app.get("/api/notes/{note_id}")
+# Get a specific note (text notes only)
+@app.get("/api/notes/{note_id}", response_model=NoteResponse)
 async def get_note(note_id: str):
     """
-    Get a specific note by ID.
+    Get a specific text note by ID.
 
     Args:
-        note_id: The ID of the note
+        note_id: The ID of the text note
 
     Returns:
         Note details
+
+    Raises:
+        HTTPException: If note not found or is a list (use /api/lists/{id} instead)
     """
     try:
         keep = get_client()
@@ -396,23 +437,34 @@ async def get_note(note_id: str):
         if not note:
             raise HTTPException(status_code=404, detail=f"Note with ID {note_id} not found")
 
-        return serialize_note(note)
+        # Validate this is a text note, not a list
+        if hasattr(note, 'items') and note.items is not None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Note with ID {note_id} is a list. Use GET /api/lists/{note_id} instead"
+            )
+
+        from .keep_api import serialize_note_only
+        return serialize_note_only(note)
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# Create a new note
+# Create a new note (text notes only)
 @app.post("/api/notes", response_model=NoteResponse)
 async def create_note(note: NoteCreateRequest):
     """
-    Create a new note with title and text.
+    Create a new text note (not a list).
 
     Args:
         note: Note creation request with title and text
 
     Returns:
         Created note details
+
+    Raises:
+        HTTPException: If request contains items (should use /api/lists instead)
     """
     try:
         keep = get_client()
@@ -427,22 +479,26 @@ async def create_note(note: NoteCreateRequest):
         new_note.labels.add(label)
         keep.sync()  # Ensure the note is created and labeled on the server
 
-        return serialize_note(new_note)
+        from .keep_api import serialize_note_only
+        return serialize_note_only(new_note)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# Update a note
+# Replace entire note (PUT)
 @app.put("/api/notes/{note_id}", response_model=NoteResponse)
-async def update_note(note_id: str, note_update: NoteUpdateRequest):
+async def put_note(note_id: str, note_update: NotePutRequest):
     """
-    Update a note's title and/or text.
+    Replace a text note entirely (title and text).
 
     Args:
-        note_id: The ID of the note to update
-        note_update: Updated note data
+        note_id: The ID of the text note to replace
+        note_update: Complete note data to replace with
 
     Returns:
         Updated note details
+
+    Raises:
+        HTTPException: If note not found or is a list
     """
     try:
         keep = get_client()
@@ -450,6 +506,13 @@ async def update_note(note_id: str, note_update: NoteUpdateRequest):
 
         if not note:
             raise HTTPException(status_code=404, detail=f"Note with ID {note_id} not found")
+
+        # Validate this is a text note, not a list
+        if hasattr(note, 'items') and note.items is not None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Note with ID {note_id} is a list. Use PUT /api/lists/{note_id} instead"
+            )
 
         if not can_modify_note(note):
             raise HTTPException(
@@ -457,29 +520,34 @@ async def update_note(note_id: str, note_update: NoteUpdateRequest):
                 detail=f"Note with ID {note_id} cannot be modified (missing keep-mcp label and UNSAFE_MODE is not enabled)"
             )
 
-        if note_update.title is not None:
-            note.title = note_update.title
-        if note_update.text is not None:
-            note.text = note_update.text
+        # Replace all fields
+        note.title = note_update.title
+        note.text = note_update.text
 
         keep.sync()  # Ensure changes are saved to the server
-        return serialize_note(note)
+
+        from .keep_api import serialize_note_only
+        return serialize_note_only(note)
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# Delete a note
-@app.delete("/api/notes/{note_id}")
-async def delete_note(note_id: str):
+# Partially update a note (PATCH)
+@app.patch("/api/notes/{note_id}", response_model=NoteResponse)
+async def patch_note(note_id: str, note_update: NotePatchRequest):
     """
-    Delete a note (mark for deletion).
+    Partially update a text note (title, text, color, or pinned status).
 
     Args:
-        note_id: The ID of the note to delete
+        note_id: The ID of the text note to update
+        note_update: Partial note data to update
 
     Returns:
-        Success message
+        Updated note details
+
+    Raises:
+        HTTPException: If note not found or is a list
     """
     try:
         keep = get_client()
@@ -487,6 +555,67 @@ async def delete_note(note_id: str):
 
         if not note:
             raise HTTPException(status_code=404, detail=f"Note with ID {note_id} not found")
+
+        # Validate this is a text note, not a list
+        if hasattr(note, 'items') and note.items is not None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Note with ID {note_id} is a list. Use PATCH /api/lists/{note_id} instead"
+            )
+
+        if not can_modify_note(note):
+            raise HTTPException(
+                status_code=403,
+                detail=f"Note with ID {note_id} cannot be modified (missing keep-mcp label and UNSAFE_MODE is not enabled)"
+            )
+
+        # Update only provided fields
+        if note_update.title is not None:
+            note.title = note_update.title
+        if note_update.text is not None:
+            note.text = note_update.text
+        if note_update.color is not None:
+            note.color = note_update.color
+        if note_update.pinned is not None:
+            note.pinned = note_update.pinned
+
+        keep.sync()  # Ensure changes are saved to the server
+
+        from .keep_api import serialize_note_only
+        return serialize_note_only(note)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Delete a note (text notes only)
+@app.delete("/api/notes/{note_id}")
+async def delete_note(note_id: str):
+    """
+    Delete a text note (mark for deletion).
+
+    Args:
+        note_id: The ID of the text note to delete
+
+    Returns:
+        Success message
+
+    Raises:
+        HTTPException: If note not found or is a list
+    """
+    try:
+        keep = get_client()
+        note = keep.get(note_id)
+
+        if not note:
+            raise HTTPException(status_code=404, detail=f"Note with ID {note_id} not found")
+
+        # Validate this is a text note, not a list
+        if hasattr(note, 'items') and note.items is not None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Note with ID {note_id} is a list. Use DELETE /api/lists/{note_id} instead"
+            )
 
         if not can_modify_note(note):
             raise HTTPException(
@@ -497,6 +626,498 @@ async def delete_note(note_id: str):
         note.delete()
         keep.sync()  # Ensure deletion is saved to the server
         return {"message": f"Note {note_id} marked for deletion", "status": "success"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Lists endpoints
+
+# Create a new list
+@app.post("/api/lists", response_model=ListResponse)
+async def create_list(list_data: ListCreateRequest):
+    """
+    Create a new list with optional initial items.
+
+    Args:
+        list_data: List creation request with title and optional nested items
+
+    Returns:
+        Created list details with nested items
+    """
+    try:
+        keep = get_client()
+        from .keep_api import create_list, serialize_list
+
+        list_obj = create_list(keep, list_data.title, list_data.items)
+        return serialize_list(list_obj)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# List all lists (metadata only)
+@app.get("/api/lists")
+async def list_lists():
+    """
+    List all lists (non-archived, non-trashed).
+    Returns metadata only - use GET /api/lists/{id} for full content with items.
+
+    Returns:
+        List of all lists (metadata only, no items)
+    """
+    try:
+        keep = get_client()
+
+        # Find all lists (notes that have items)
+        all_notes = keep.find(archived=False, trashed=False)
+        lists = [note for note in all_notes if hasattr(note, 'items') and note.items is not None]
+
+        from .keep_api import serialize_note_metadata
+        lists_data = [serialize_note_metadata(list_obj) for list_obj in lists]
+        return {"lists": lists_data, "count": len(lists_data)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Get a specific list
+@app.get("/api/lists/{list_id}", response_model=ListResponse)
+async def get_list(list_id: str):
+    """
+    Get a specific list by ID with all items included.
+
+    Args:
+        list_id: The ID of the list
+
+    Returns:
+        List details with nested items
+
+    Raises:
+        HTTPException: If list not found or is a text note
+    """
+    try:
+        keep = get_client()
+        list_obj = keep.get(list_id)
+
+        if not list_obj:
+            raise HTTPException(status_code=404, detail=f"List with ID {list_id} not found")
+
+        # Validate this is a list, not a text note
+        if not hasattr(list_obj, 'items') or list_obj.items is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Note with ID {list_id} is a text note. Use GET /api/notes/{list_id} instead"
+            )
+
+        from .keep_api import serialize_list
+        return serialize_list(list_obj)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Replace entire list (PUT)
+@app.put("/api/lists/{list_id}", response_model=ListResponse)
+async def put_list(list_id: str, list_update: ListPutRequest):
+    """
+    Replace a list entirely (title and all items).
+
+    Args:
+        list_id: The ID of the list to replace
+        list_update: Complete list data to replace with
+
+    Returns:
+        Updated list details with nested items
+
+    Raises:
+        HTTPException: If list not found or is a text note
+    """
+    try:
+        keep = get_client()
+        list_obj = keep.get(list_id)
+
+        if not list_obj:
+            raise HTTPException(status_code=404, detail=f"List with ID {list_id} not found")
+
+        # Validate this is a list, not a text note
+        if not hasattr(list_obj, 'items') or list_obj.items is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Note with ID {list_id} is a text note. Use PUT /api/notes/{list_id} instead"
+            )
+
+        if not can_modify_note(list_obj):
+            raise HTTPException(
+                status_code=403,
+                detail=f"List with ID {list_id} cannot be modified (missing keep-mcp label and UNSAFE_MODE is not enabled)"
+            )
+
+        # Delete all existing items
+        for item in list(list_obj.items):
+            item.delete()
+
+        # Update title
+        list_obj.title = list_update.title
+
+        # Add new items if provided
+        if list_update.items:
+            _add_items_recursively(list_obj, list_update.items)
+
+        keep.sync()  # Ensure changes are saved to the server
+
+        from .keep_api import serialize_list
+        return serialize_list(list_obj)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Partially update list metadata (PATCH)
+@app.patch("/api/lists/{list_id}", response_model=ListResponse)
+async def patch_list(list_id: str, list_update: ListPatchRequest):
+    """
+    Partially update list metadata (title, color, pinned) without affecting items.
+
+    Args:
+        list_id: The ID of the list to update
+        list_update: Partial list metadata to update
+
+    Returns:
+        Updated list details with nested items
+
+    Raises:
+        HTTPException: If list not found or is a text note
+    """
+    try:
+        keep = get_client()
+        list_obj = keep.get(list_id)
+
+        if not list_obj:
+            raise HTTPException(status_code=404, detail=f"List with ID {list_id} not found")
+
+        # Validate this is a list, not a text note
+        if not hasattr(list_obj, 'items') or list_obj.items is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Note with ID {list_id} is a text note. Use PATCH /api/notes/{list_id} instead"
+            )
+
+        if not can_modify_note(list_obj):
+            raise HTTPException(
+                status_code=403,
+                detail=f"List with ID {list_id} cannot be modified (missing keep-mcp label and UNSAFE_MODE is not enabled)"
+            )
+
+        # Update only provided metadata fields (not items)
+        if list_update.title is not None:
+            list_obj.title = list_update.title
+        if list_update.color is not None:
+            list_obj.color = list_update.color
+        if list_update.pinned is not None:
+            list_obj.pinned = list_update.pinned
+
+        keep.sync()  # Ensure changes are saved to the server
+
+        from .keep_api import serialize_list
+        return serialize_list(list_obj)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Delete a list
+@app.delete("/api/lists/{list_id}")
+async def delete_list(list_id: str):
+    """
+    Delete a list entirely (mark for deletion).
+
+    Args:
+        list_id: The ID of the list to delete
+
+    Returns:
+        Success message
+
+    Raises:
+        HTTPException: If list not found or is a text note
+    """
+    try:
+        keep = get_client()
+        list_obj = keep.get(list_id)
+
+        if not list_obj:
+            raise HTTPException(status_code=404, detail=f"List with ID {list_id} not found")
+
+        # Validate this is a list, not a text note
+        if not hasattr(list_obj, 'items') or list_obj.items is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Note with ID {list_id} is a text note. Use DELETE /api/notes/{list_id} instead"
+            )
+
+        if not can_modify_note(list_obj):
+            raise HTTPException(
+                status_code=403,
+                detail=f"List with ID {list_id} cannot be modified (missing keep-mcp label and UNSAFE_MODE is not enabled)"
+            )
+
+        list_obj.delete()
+        keep.sync()  # Ensure deletion is saved to the server
+        return {"message": f"List {list_id} marked for deletion", "status": "success"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# List items endpoints
+
+# Add items to a list
+@app.post("/api/lists/{list_id}/items")
+async def add_list_items(list_id: str, items_request: ItemAddRequest):
+    """
+    Add one or more items to an existing list. Supports nested children.
+
+    Args:
+        list_id: The ID of the list to add items to
+        items_request: Array of items to add with optional nested structure
+
+    Returns:
+        Success response with added items count
+
+    Raises:
+        HTTPException: If list not found or is a text note
+    """
+    try:
+        keep = get_client()
+        list_obj = keep.get(list_id)
+
+        if not list_obj:
+            raise HTTPException(status_code=404, detail=f"List with ID {list_id} not found")
+
+        # Validate this is a list, not a text note
+        if not hasattr(list_obj, 'items') or list_obj.items is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Note with ID {list_id} is a text note. Use PATCH /api/notes/{list_id} instead"
+            )
+
+        if not can_modify_note(list_obj):
+            raise HTTPException(
+                status_code=403,
+                detail=f"List with ID {list_id} cannot be modified (missing keep-mcp label and UNSAFE_MODE is not enabled)"
+            )
+
+        # Add items recursively
+        created_items = _add_items_recursively(list_obj, items_request.items)
+        keep.sync()  # Ensure changes are saved to the server
+
+        return {
+            "message": f"Added {len(created_items)} items to list {list_id}",
+            "items_added": len(created_items),
+            "status": "success"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Get a specific list item
+@app.get("/api/lists/{list_id}/items/{item_id}", response_model=ItemResponse)
+async def get_list_item(list_id: str, item_id: str):
+    """
+    Get a specific item from a list.
+
+    Args:
+        list_id: The ID of the list containing the item
+        item_id: The ID of the item to retrieve
+
+    Returns:
+        Item details
+
+    Raises:
+        HTTPException: If list or item not found
+    """
+    try:
+        keep = get_client()
+        list_obj = keep.get(list_id)
+
+        if not list_obj:
+            raise HTTPException(status_code=404, detail=f"List with ID {list_id} not found")
+
+        # Validate this is a list, not a text note
+        if not hasattr(list_obj, 'items') or list_obj.items is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Note with ID {list_id} is a text note"
+            )
+
+        # Find the item by ID
+        target_item = None
+        for item in list_obj.items:
+            if item.id == item_id:
+                target_item = item
+                break
+
+        if not target_item:
+            raise HTTPException(status_code=404, detail=f"Item with ID {item_id} not found in list {list_id}")
+
+        return ItemResponse(
+            id=target_item.id,
+            text=target_item.text,
+            checked=target_item.checked,
+            parent_item_id=target_item.parent_item.id if target_item.parent_item else None
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Update a specific list item
+@app.patch("/api/lists/{list_id}/items/{item_id}", response_model=ItemResponse)
+async def patch_list_item(list_id: str, item_id: str, item_update: ItemPatchRequest):
+    """
+    Update a specific item in a list (text, checked status, or parent_item_id).
+
+    Args:
+        list_id: The ID of the list containing the item
+        item_id: The ID of the item to update
+        item_update: Item fields to update
+
+    Returns:
+        Updated item details
+
+    Raises:
+        HTTPException: If list or item not found
+    """
+    try:
+        keep = get_client()
+        list_obj = keep.get(list_id)
+
+        if not list_obj:
+            raise HTTPException(status_code=404, detail=f"List with ID {list_id} not found")
+
+        # Validate this is a list, not a text note
+        if not hasattr(list_obj, 'items') or list_obj.items is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Note with ID {list_id} is a text note"
+            )
+
+        if not can_modify_note(list_obj):
+            raise HTTPException(
+                status_code=403,
+                detail=f"List with ID {list_id} cannot be modified (missing keep-mcp label and UNSAFE_MODE is not enabled)"
+            )
+
+        # Find the item by ID
+        target_item = None
+        for item in list_obj.items:
+            if item.id == item_id:
+                target_item = item
+                break
+
+        if not target_item:
+            raise HTTPException(status_code=404, detail=f"Item with ID {item_id} not found in list {list_id}")
+
+        # Update provided fields
+        if item_update.text is not None:
+            target_item.text = item_update.text
+
+        # Handle checked status with cascading logic
+        if item_update.checked is not None:
+            _update_item_checked_with_cascade(list_obj.items, target_item, item_update.checked)
+
+        # Handle nesting changes
+        if item_update.parent_item_id is not None:
+            if item_update.parent_item_id:
+                # Find the new parent item
+                new_parent = None
+                for item in list_obj.items:
+                    if item.id == item_update.parent_item_id:
+                        new_parent = item
+                        break
+
+                if not new_parent:
+                    raise HTTPException(status_code=400, detail=f"Parent item with ID {item_update.parent_item_id} not found")
+
+                # Indent under the new parent
+                new_parent.indent(target_item)
+            else:
+                # Unindent (dedent) the item
+                if target_item.parent_item:
+                    target_item.parent_item.dedent(target_item)
+
+        keep.sync()  # Ensure changes are saved to the server
+
+        return ItemResponse(
+            id=target_item.id,
+            text=target_item.text,
+            checked=target_item.checked,
+            parent_item_id=target_item.parent_item.id if target_item.parent_item else None
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Delete a specific list item
+@app.delete("/api/lists/{list_id}/items/{item_id}")
+async def delete_list_item(list_id: str, item_id: str):
+    """
+    Delete a specific item from a list, including all its children.
+
+    Args:
+        list_id: The ID of the list containing the item
+        item_id: The ID of the item to delete
+
+    Returns:
+        Success message
+
+    Raises:
+        HTTPException: If list or item not found
+    """
+    try:
+        keep = get_client()
+        list_obj = keep.get(list_id)
+
+        if not list_obj:
+            raise HTTPException(status_code=404, detail=f"List with ID {list_id} not found")
+
+        # Validate this is a list, not a text note
+        if not hasattr(list_obj, 'items') or list_obj.items is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Note with ID {list_id} is a text note"
+            )
+
+        if not can_modify_note(list_obj):
+            raise HTTPException(
+                status_code=403,
+                detail=f"List with ID {list_id} cannot be modified (missing keep-mcp label and UNSAFE_MODE is not enabled)"
+            )
+
+        # Find the item to delete
+        target_item = None
+        for item in list_obj.items:
+            if item.id == item_id:
+                target_item = item
+                break
+
+        if not target_item:
+            raise HTTPException(status_code=404, detail=f"Item with ID {item_id} not found in list {list_id}")
+
+        # Store parent reference before deletion for status update
+        parent_item = target_item.parent_item
+
+        # Recursively delete the item and all its children
+        _delete_item_with_children(list_obj.items, target_item)
+
+        # Update parent's checked status if the deleted item was checked
+        if parent_item and target_item.checked:
+            _update_parent_checked_status(list_obj.items, parent_item)
+
+        keep.sync()  # Ensure changes are saved to the server
+
+        return {
+            "message": f"Item {item_id} and its children deleted from list {list_id}",
+            "status": "success"
+        }
     except HTTPException:
         raise
     except Exception as e:
@@ -567,352 +1188,6 @@ async def get_collaborators(note_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# List-specific endpoints
-
-# Add item to list
-@app.post("/api/notes/{note_id}/list/items", response_model=ListItemResponse)
-async def add_list_item(note_id: str, item: ListItemRequest):
-    """
-    Add an item to an existing list. Supports nested items via parent_item_id.
-
-    Args:
-        note_id: The ID of the note/list
-        item: Item to add with optional parent_item_id for nesting
-
-    Returns:
-        Updated list details
-    """
-    try:
-        keep = get_client()
-        list_obj = keep.get(note_id)
-
-        if not list_obj:
-            raise HTTPException(status_code=404, detail=f"List with ID {note_id} not found")
-
-        if not hasattr(list_obj, 'items'):
-            raise HTTPException(status_code=400, detail=f"Note with ID {note_id} is not a list")
-
-        if not can_modify_note(list_obj):
-            raise HTTPException(
-                status_code=403,
-                detail=f"List with ID {note_id} cannot be modified (missing keep-mcp label and UNSAFE_MODE is not enabled)"
-            )
-
-        # Add the item
-        new_item = list_obj.add(item.text, item.checked)
-
-        # If parent_item_id is specified, indent the item
-        if item.parent_item_id:
-            parent_item = None
-            for existing_item in list_obj.items:
-                if existing_item.id == item.parent_item_id:
-                    parent_item = existing_item
-                    break
-
-            if parent_item:
-                parent_item.indent(new_item)
-                # If adding a checked item to a parent, update parent's checked status
-                if item.checked:
-                    _update_parent_checked_status(list_obj.items, new_item)
-            else:
-                raise HTTPException(status_code=400, detail=f"Parent item with ID {item.parent_item_id} not found")
-
-        keep.sync()  # Ensure changes are saved to the server
-
-        # Return the created ListItemResponse
-        return ListItemResponse(
-            id=new_item.id,
-            text=new_item.text,
-            checked=new_item.checked,
-            sort=getattr(new_item, 'sort', None),
-            parent_item_id=new_item.parent_item.id if new_item.parent_item else None
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-# Get list item
-@app.get("/api/notes/{note_id}/list/items/{item_id}", response_model=ListItemResponse)
-async def get_list_item(note_id: str, item_id: str):
-    """
-    Get a specific item from a list.
-
-    Args:
-        note_id: The ID of the note/list
-        item_id: The ID of the item to retrieve
-
-    Returns:
-        ListItemResponse details
-    """
-    try:
-        keep = get_client()
-        list_obj = keep.get(note_id)
-
-        if not list_obj:
-            raise HTTPException(status_code=404, detail=f"List with ID {note_id} not found")
-
-        if not hasattr(list_obj, 'items'):
-            raise HTTPException(status_code=400, detail=f"Note with ID {note_id} is not a list")
-
-        # Find the item by ID
-        target_item = None
-        for item in list_obj.items:
-            if item.id == item_id:
-                target_item = item
-                break
-
-        if not target_item:
-            raise HTTPException(status_code=404, detail=f"Item with ID {item_id} not found in list {note_id}")
-
-        return ListItemResponse(
-            id=target_item.id,
-            text=target_item.text,
-            checked=target_item.checked,
-            sort=getattr(target_item, 'sort', None),
-            parent_item_id=target_item.parent_item.id if target_item.parent_item else None
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-# Update list item
-@app.put("/api/notes/{note_id}/list/items/{item_id}", response_model=ListItemResponse)
-async def update_list_item(note_id: str, item_id: str, item_update: ListItemUpdateRequest):
-    """
-    Update a specific item in a list. Supports changing nesting via parent_item_id.
-    Automatically handles cascading check behavior for nested items.
-
-    Args:
-        note_id: The ID of the note/list
-        item_id: The ID of the item to update
-        item_update: Updated item data (text, checked, parent_item_id)
-
-    Returns:
-        Updated list details
-    """
-    try:
-        keep = get_client()
-        list_obj = keep.get(note_id)
-
-        if not list_obj:
-            raise HTTPException(status_code=404, detail=f"List with ID {note_id} not found")
-
-        if not hasattr(list_obj, 'items'):
-            raise HTTPException(status_code=400, detail=f"Note with ID {note_id} is not a list")
-
-        if not can_modify_note(list_obj):
-            raise HTTPException(
-                status_code=403,
-                detail=f"List with ID {note_id} cannot be modified (missing keep-mcp label and UNSAFE_MODE is not enabled)"
-            )
-
-        # Find the item by ID
-        target_item = None
-        for item in list_obj.items:
-            if item.id == item_id:
-                target_item = item
-                break
-
-        if not target_item:
-            raise HTTPException(status_code=404, detail=f"Item with ID {item_id} not found in list {note_id}")
-
-        # Update basic properties
-        if item_update.text is not None:
-            target_item.text = item_update.text
-
-        # Handle checked status with cascading logic
-        if item_update.checked is not None:
-            _update_item_checked_with_cascade(list_obj.items, target_item, item_update.checked)
-
-        # Handle nesting changes
-        if item_update.parent_item_id is not None:
-            if item_update.parent_item_id:
-                # Find the new parent item
-                new_parent = None
-                for item in list_obj.items:
-                    if item.id == item_update.parent_item_id:
-                        new_parent = item
-                        break
-
-                if not new_parent:
-                    raise HTTPException(status_code=400, detail=f"Parent item with ID {item_update.parent_item_id} not found")
-
-                # Indent under the new parent
-                new_parent.indent(target_item)
-            else:
-                # Unindent (dedent) the item
-                if target_item.parent_item:
-                    target_item.parent_item.dedent(target_item)
-
-        keep.sync()  # Ensure changes are saved to the server
-
-        # Return the updated ListItemResponse
-        return ListItemResponse(
-            id=target_item.id,
-            text=target_item.text,
-            checked=target_item.checked,
-            sort=getattr(target_item, 'sort', None),
-            parent_item_id=target_item.parent_item.id if target_item.parent_item else None
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-# Delete list item
-@app.delete("/api/notes/{note_id}/list/items/{item_id}")
-async def delete_list_item(note_id: str, item_id: str):
-    """
-    Delete a specific item from a list. Updates parent checked status if needed.
-
-    Args:
-        note_id: The ID of the note/list
-        item_id: The ID of the item to delete
-
-    Returns:
-        Updated list details
-    """
-    try:
-        keep = get_client()
-        list_obj = keep.get(note_id)
-
-        if not list_obj:
-            raise HTTPException(status_code=404, detail=f"List with ID {note_id} not found")
-
-        if not hasattr(list_obj, 'items'):
-            raise HTTPException(status_code=400, detail=f"Note with ID {note_id} is not a list")
-
-        if not can_modify_note(list_obj):
-            raise HTTPException(
-                status_code=403,
-                detail=f"List with ID {note_id} cannot be modified (missing keep-mcp label and UNSAFE_MODE is not enabled)"
-            )
-
-        # Find the item to delete
-        target_item = None
-        for item in list_obj.items:
-            if item.id == item_id:
-                target_item = item
-                break
-
-        if not target_item:
-            raise HTTPException(status_code=404, detail=f"Item with ID {item_id} not found in list {note_id}")
-
-        # Store parent reference before deletion for status update
-        parent_item = target_item.parent_item
-
-        # Recursively delete the item and all its children
-        _delete_item_with_children(list_obj.items, target_item)
-
-        # Update parent's checked status if the deleted item was checked
-        if parent_item and target_item.checked:
-            _update_parent_checked_status(list_obj.items, parent_item)
-
-        keep.sync()  # Ensure changes are saved to the server
-
-        return serialize_note(list_obj)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-# Nested list item endpoints
-
-# POST /api/notes/{note_id}/list/nested
-@app.post("/api/notes/{note_id}/list/nested", response_model=NestedAddListItemsResponse)
-async def add_nested_list_items(note_id: str, request: NestedAddListItemsRequest):
-    """
-    Add multiple items to a list with nested children in one call.
-
-    Supports two modes:
-    - "append" (default): Add items to existing list
-    - "replace": Replace all existing items with new ones
-
-    Args:
-        note_id: The ID of the note/list
-        request: NestedAddListItemsRequest with items and mode
-
-    Returns:
-        NestedAddListItemsResponse with created items
-    """
-    try:
-        keep = get_client()
-        list_obj = keep.get(note_id)
-
-        if not list_obj:
-            raise HTTPException(status_code=404, detail=f"List with ID {note_id} not found")
-
-        if not hasattr(list_obj, 'items'):
-            raise HTTPException(status_code=400, detail=f"Note with ID {note_id} is not a list")
-
-        if not can_modify_note(list_obj):
-            raise HTTPException(
-                status_code=403,
-                detail=f"List with ID {note_id} cannot be modified (missing keep-mcp label and UNSAFE_MODE is not enabled)"
-            )
-
-        # Handle replace mode - delete all existing items
-        if request.mode == "replace":
-            for item in list(list_obj.items):
-                item.delete()
-
-        # Add items recursively
-        created_items = _add_items_recursively(list_obj, request.items)
-
-        # Sync changes to Google Keep
-        keep.sync()
-
-        # Build nested response structure
-        nested_items = _build_nested_items(list_obj.items)
-
-        return NestedAddListItemsResponse(
-            note_id=note_id,
-            items_added=len(created_items),
-            mode=request.mode,
-            items=nested_items
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-# GET /api/notes/{note_id}/list/nested
-@app.get("/api/notes/{note_id}/list/nested", response_model=NestedGetListItemsResponse)
-async def get_nested_list_items(note_id: str):
-    """
-    Get all items from a list in nested format (matching POST input structure).
-
-    Args:
-        note_id: The ID of the note/list
-
-    Returns:
-        NestedGetListItemsResponse with nested items
-    """
-    try:
-        keep = get_client()
-        list_obj = keep.get(note_id)
-
-        if not list_obj:
-            raise HTTPException(status_code=404, detail=f"List with ID {note_id} not found")
-
-        if not hasattr(list_obj, 'items'):
-            raise HTTPException(status_code=400, detail=f"Note with ID {note_id} is not a list")
-
-        # Build nested structure from flat items
-        nested_items = _build_nested_items(list_obj.items)
-
-        return NestedGetListItemsResponse(
-            note_id=note_id,
-            title=list_obj.title,
-            items=nested_items,
-            total_items=len(list_obj.items)
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn

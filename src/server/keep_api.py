@@ -211,4 +211,113 @@ def list_collaborators(note_id):
         raise ValueError(f"Note with ID {note_id} not found")
 
     collaborators = note.collaborators.all()
-    return list(collaborators) 
+    return list(collaborators)
+
+
+def create_list(keep, title, items=None):
+    """
+    Create a new Google Keep list with optional initial items.
+
+    Args:
+        keep: Google Keep client instance
+        title (str): Title of the list
+        items (list, optional): List of NestedListItemInput objects with optional nesting
+
+    Returns:
+        gkeepapi.node.List: Created list object
+    """
+    # Create the list
+    list_obj = keep.createList(title=title)
+
+    # Add the keep-mcp label
+    label = keep.findLabel('keep-mcp')
+    if not label:
+        label = keep.createLabel('keep-mcp')
+    list_obj.labels.add(label)
+
+    # Add items if provided
+    if items:
+        from .rest_api import _add_items_recursively  # Import here to avoid circular dependency
+        _add_items_recursively(list_obj, items)
+        keep.sync()
+
+    return list_obj
+
+
+def serialize_list(list_obj):
+    """
+    Serialize a Google Keep list into a nested structure for API responses.
+
+    Args:
+        list_obj: A Google Keep list object
+
+    Returns:
+        dict: Serialized list with nested items
+    """
+    from .rest_api import _build_nested_items  # Import here to avoid circular dependency
+
+    # Build nested items structure
+    nested_items = _build_nested_items(list_obj.items)
+
+    return {
+        'id': list_obj.id,
+        'title': list_obj.title,
+        'pinned': list_obj.pinned,
+        'color': list_obj.color.value if list_obj.color else None,
+        'labels': [{'id': label.id, 'name': label.name} for label in list_obj.labels.all()],
+        'collaborators': list(list_obj.collaborators.all()) if hasattr(list_obj, 'collaborators') else [],
+        'items': nested_items,
+        'type': 'list'
+    }
+
+
+def serialize_note_only(note):
+    """
+    Serialize a Google Keep note ensuring no items are included (for notes endpoints).
+
+    Args:
+        note: A Google Keep note object
+
+    Returns:
+        dict: Serialized note without items
+
+    Raises:
+        ValueError: If note is actually a list
+    """
+    if hasattr(note, 'items') and note.items is not None:
+        raise ValueError(f"Note with ID {note.id} is a list, not a text note")
+
+    return {
+        'id': note.id,
+        'title': note.title,
+        'text': note.text,
+        'pinned': note.pinned,
+        'color': note.color.value if note.color else None,
+        'labels': [{'id': label.id, 'name': label.name} for label in note.labels.all()],
+        'collaborators': list(note.collaborators.all()) if hasattr(note, 'collaborators') else [],
+        'type': 'note'
+    }
+
+
+def serialize_note_metadata(note):
+    """
+    Serialize a Google Keep note/list into metadata-only dictionary.
+    Returns basic info without text content or items.
+
+    Args:
+        note: A Google Keep note or list object
+
+    Returns:
+        dict: Metadata-only (id, title, pinned, color, labels, collaborators, type)
+    """
+    is_list = hasattr(note, 'items') and note.items is not None
+
+    return {
+        'id': note.id,
+        'title': note.title,
+        'pinned': note.pinned,
+        'color': note.color.value if note.color else None,
+        'labels': [{'id': label.id, 'name': label.name} for label in note.labels.all()],
+        'collaborators': list(note.collaborators.all()) if hasattr(note, 'collaborators') else [],
+        'type': 'list' if is_list else 'note'
+    } 

@@ -80,10 +80,10 @@ This starts two services:
 # Health check
 curl http://localhost:8001/health
 
-# List all notes
+# List all notes (metadata only)
 curl http://localhost:8001/api/notes
 
-# Search notes
+# Search notes (metadata only)
 curl "http://localhost:8001/api/notes/search?query=todo"
 
 # Create a note
@@ -91,13 +91,38 @@ curl -X POST http://localhost:8001/api/notes \
   -H "Content-Type: application/json" \
   -d '{"title": "My Note", "text": "Note content"}'
 
-# Create a list
+# Create a list with nested items
 curl -X POST http://localhost:8001/api/lists \
   -H "Content-Type: application/json" \
-  -d '{"title": "Shopping List", "items": [{"text": "Milk", "checked": false}, {"text": "Bread", "checked": true}]}'
+  -d '{
+    "title": "Shopping List",
+    "items": [
+      {
+        "text": "Produce",
+        "checked": false,
+        "children": [
+          {"text": "Apples", "checked": false},
+          {"text": "Bananas", "checked": true}
+        ]
+      },
+      {"text": "Dairy", "checked": false}
+    ]
+  }'
+
+# Add items to an existing list
+curl -X POST http://localhost:8001/api/lists/{list_id}/items \
+  -H "Content-Type: application/json" \
+  -d '{
+    "items": [
+      {"text": "New Item", "checked": false},
+      {"text": "Another Item", "checked": true}
+    ]
+  }'
 ```
 
 3. Interactive API documentation available at: `http://localhost:8001/docs`
+
+**Note:** List endpoints (`GET /api/notes`, `GET /api/lists`, `GET /api/notes/search`) return metadata only for performance. Use individual endpoints (`GET /api/notes/{id}`, `GET /api/lists/{id}`) to fetch full content.
 
 **REST API Features:**
 - Full CRUD operations (Create, Read, Update, Delete)
@@ -123,30 +148,75 @@ Add your credentials:
 
 Check https://gkeepapi.readthedocs.io/en/latest/#obtaining-a-master-token and https://github.com/simon-weber/gpsoauth?tab=readme-ov-file#alternative-flow for more information.
 
+## REST API Architecture
+
+The REST API provides clean separation between different resource types with a metadata vs full content pattern:
+
+### Notes Resource (`/api/notes`) - All note types
+Unified endpoint for all note types (text notes + lists):
+- `POST /api/notes` - Create text note
+- `GET /api/notes` - List all notes (text + lists, metadata only)
+- `GET /api/notes/search?query=x` - Search all notes by title (metadata only)
+- `GET /api/notes/{id}` - Get single text note (full content with text)
+- `PUT /api/notes/{id}` - Replace entire text note
+- `PATCH /api/notes/{id}` - Partial update (title/text/color/pinned)
+- `DELETE /api/notes/{id}` - Delete text note
+
+### Lists Resource (`/api/lists`) - List notes only
+List-specific operations:
+- `POST /api/lists` - Create list with nested items
+- `GET /api/lists` - List all lists (metadata only, no items)
+- `GET /api/lists/{id}` - Get list with all nested items (full content)
+- `PUT /api/lists/{id}` - Replace entire list (title + items)
+- `PATCH /api/lists/{id}` - Update list metadata only
+- `DELETE /api/lists/{id}` - Delete list
+
+### Items Sub-Resource (`/api/lists/{id}/items`)
+Individual item operations:
+- `POST /api/lists/{id}/items` - Add items (accepts arrays)
+- `GET /api/lists/{id}/items/{item_id}` - Get single item
+- `PATCH /api/lists/{id}/items/{item_id}` - Update item
+- `DELETE /api/lists/{id}/items/{item_id}` - Delete item + children
+
+### Collaborators (`/api/notes/{id}/collaborators`)
+Sharing functionality for both notes and lists:
+- `POST /api/notes/{id}/collaborators` - Add collaborator
+- `GET /api/notes/{id}/collaborators` - List collaborators
+- `DELETE /api/notes/{id}/collaborators/{email}` - Remove collaborator
+
 ## Features
 
-### Notes
-* `find`: Search for notes and lists based on a query string
-* `create_note`: Create a new note with title and text (automatically adds keep-mcp label)
-* `update_note`: Update a note's title and text
-* `delete_note`: Mark a note for deletion
+### Text Notes (`/api/notes`)
+- Full CRUD operations for text-only notes
+- Search functionality with case-insensitive queries
+- Partial updates (PATCH) for individual fields
+- Type validation prevents mixing with lists
+- Automatic keep-mcp label assignment for safety
 
-### Lists ✨ **NEW**
-* `add_list_item`: Add an item to an existing list (supports nesting via parent_item_id)
-* `update_list_item`: Update a specific item in a list (text, checked status, and nesting) with automatic cascading check behavior
-* `delete_list_item`: Delete a specific item and all its children recursively, with cascading parent status updates
+### Lists with Nested Items (`/api/lists`)
+- Create lists with deeply nested item structures
+- Full list replacement or metadata-only updates
+- Add multiple items at once with nesting support
+- Individual item operations (get/update/delete)
+- Automatic cascading check behavior for nested items
 
-**Note:** Lists are created and updated using the same `create_note` and `update_note` tools/endpoints, which automatically detect list vs note content. All list item operations include Google Keep-style cascading check behavior:
-- Checking a parent checks all children recursively
-- Parents are only checked when all children are checked
-- Deleting a parent item deletes all its children recursively
-- Deleting a checked child updates parent status appropriately
+### Item Operations (`/api/lists/{id}/items`)
+- Add items individually or in batches
+- Update item properties (text, checked, parent_item_id)
+- Recursive deletion of items and children
+- Automatic parent status updates on child operations
 
-By default, all destructive and modification operations are restricted to notes that have were created by the MCP server (i.e. have the keep-mcp label). Set `UNSAFE_MODE` to `true` to bypass this restriction.
+### Collaborator Management
+- Share notes and lists with collaborators
+- Email-based collaborator management
+- Permission validation (keep-mcp label required)
+- List all collaborators for a resource
 
-```
+### Safety Features
+By default, all modification operations are restricted to resources with the keep-mcp label. Set `UNSAFE_MODE=true` to allow operations on all notes.
+
+```json
 "env": {
-  ...
   "UNSAFE_MODE": "true"
 }
 ```
