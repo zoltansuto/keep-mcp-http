@@ -533,12 +533,12 @@ def note_add_list_items_nested(note_id: str, items_json: str, mode: str = "appen
     """
     Add multiple items to a list with nested children in one call.
 
-    LIMIT: items_json is limited to ~2000 characters. For larger payloads, split into
+    LIMIT: items_json is limited to ~1800 characters. For larger payloads, split into
     batches and call multiple times with mode="append".
 
     Args:
         note_id: The ID of the note/list
-        items_json: JSON array of items (max ~2000 chars, use minified JSON):
+        items_json: JSON array of items (max ~1800 chars, use minified JSON):
             [{"text": "Item", "checked": false, "children": [...]}, ...]
         mode: "append" (default) adds to existing items, "replace" replaces all.
             Note: append adds to END of root list; each batch needs complete nested structures.
@@ -551,9 +551,9 @@ def note_add_list_items_nested(note_id: str, items_json: str, mode: str = "appen
     """
     try:
         # Check payload size upfront
-        if len(items_json) > 2000:
+        if len(items_json) > 1800:
             raise ValueError(
-                f"JSON payload too large ({len(items_json)} chars, limit ~2000). "
+                f"JSON payload too large ({len(items_json)} chars, limit ~1800). "
                 f"Split into batches and use mode='append' for subsequent calls. Use minified JSON."
             )
 
@@ -594,7 +594,7 @@ def note_add_list_items_nested(note_id: str, items_json: str, mode: str = "appen
             if len(items_json) > 1800:
                 raise ValueError(
                     f"JSON payload too large ({len(items_json)} chars). The items_json parameter "
-                    f"is limited to ~2000 characters due to MCP protocol constraints. "
+                    f"is limited to ~1800 characters due to MCP protocol constraints. "
                     f"Split your data into smaller batches and call this tool multiple times with mode='append'. "
                     f"Use minified JSON (no whitespace) to maximize data per batch. Original error: {error_msg}"
                 )
