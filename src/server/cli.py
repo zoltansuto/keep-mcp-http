@@ -557,8 +557,7 @@ def note_add_list_items_nested(note_id: str, items_json: str, mode: str = "appen
                 f"Split into batches and use mode='append' for subsequent calls. Use minified JSON."
             )
 
-        # Parse the JSON input
-        import json
+        # Parse the JSON input (use module-level json from line 6)
         items_data = json.loads(items_json)
 
         # Validate that it's a list
@@ -624,7 +623,13 @@ def note_add_list_items_nested(note_id: str, items_json: str, mode: str = "appen
     created_items = _add_items_recursively(list_obj, validated_items)
 
     # Sync changes to Google Keep
-    keep.sync()
+    try:
+        keep.sync()
+    except Exception as e:
+        raise ValueError(
+            f"Failed to sync changes to Google Keep: {str(e)}. "
+            "Check item text for invalid characters or try smaller batches."
+        )
 
     # Build nested response structure
     nested_items = _build_nested_items(list_obj.items)
